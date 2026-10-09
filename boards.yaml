@@ -138,3 +138,9 @@ wavesharep4:
   name: Waveshare
   model: ESP32-P4-86-Panel-ETH-2RO
   status: experimental
+
+onx2432g028:
+  file: onx2432g028.yaml
+  name: Open Nextion
+  model: ONX2432G028
+  status: experimental

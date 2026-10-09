@@ -1,0 +1,126 @@
+# ESP Screens - Open Nextion ONX2432G028 (2.8-inch "Genius" board, V1.3): a 240 x 320 panel (ST7789 over SPI, ESPHome's
+# mipi_spi model ST7789V) with CST826 capacitive touch over I2C (ESPHome's cst816 platform, 2025.12.0+), on an
+# ESP32-S3R8 with 16MB flash and 8MB octal PSRAM. A PCF8574A I2C expander at 0x38 carries the display's reset, the
+# touch interrupt and the enable lines of the parts this profile leaves alone (SD card, camera, speaker, RTC).
+#
+# The same glass size as the CYD (cyd-2432s028.yaml), so the same density, look and grid; the chip, the buses and
+# the backlight pin are the Waveshare 3.5's (waveshare-esp32s3-35.yaml). The pins are the ones of the vendor's own
+# examples (github.com/OpenNextion/OpenNextion-SKU-ONX2432G028, ESP-IDF 01_touch_test) and its openHASP port.
+# NOT YET TRIED ON THE GLASS: docs/ONX2432G028.md lists what the first flash has to settle.
+#
+# A board file is the board's hardware, the facts the shared tree takes from it (its glass and its grid), and the
+# features it has; docs/PROFILES.md says how the files of a screen fit together, docs/ADDING_A_BOARD.md how a board
+# is added. Two entry files include this one: checkout/onx2432g028.yaml (a build on this computer) and
+# packages/onx2432g028.yaml (the package a screen builds from over GitHub).
+packages:
+  build: !include ../hardware/esp-idf.yaml
+  look: !include ../looks/compact.yaml
+  touch: !include ../features/capacitive-touch.yaml
+  backlight: !include ../features/backlight.yaml
+  camera: !include ../features/camera.yaml
+  self_test: !include ../features/self-test.yaml
+  snapshot: !include ../features/snapshot.yaml
+
+substitutions:
+  # The key of this board file; the firmware reports it so ESP Screens knows what board a screen is.
+  BOARD_ID: "onx2432g028"
+  DEVICE_NAME: "onx2432g028-new"
+  DEVICE_FRIENDLY_NAME: "My Open Nextion"
+
+  # The glass: the panel's own pixels and its density, 400 diagonal pixels over 2.8 inches.
+  PANEL_W: "240"
+  PANEL_H: "320"
+  DISPLAY_DPI: "142.857"
+  # The LVGL angle that lays this panel out lying down (320 x 240). Standing up is a quarter further.
+  ROTATION_LANDSCAPE: "90"
+  # The tile grid: columns and rows of cells lying down, and standing up.
+  GRID_COLS: "2"
+  GRID_ROWS: "3"
+  GRID_COLS_PORTRAIT: "1"
+  GRID_ROWS_PORTRAIT: "4"
+  LVGL_BUFFER_SIZE: "12%"                       # LVGL's draw buffer as a share of the screen
+
+  # More tiles and pages than the 64 and eight of a board without PSRAM (firmware 0.34.0+): the tile list, the cards and the
+  # extras live in PSRAM here, and the memory budget (tile_memory.h) says how many of them a layout really takes.
+  SCREEN_MAX_TILES: "128"
+  SCREEN_MAX_PAGES: "24"
+
+  # Hardware a screen's own YAML may change (docs/EASY_SETUP.md, "Hardware-specific YAML overrides"), until the glass
+  # has said which values are right (docs/ONX2432G028.md).
+  DISPLAY_DATA_RATE: "40MHz"                    # the display's SPI clock; the vendor's examples run it at 80MHz
+  DISPLAY_INVERT_COLORS: "false"                # the vendor's ESP-IDF example switches inversion off
+  DISPLAY_COLOR_ORDER: "rgb"                    # as the vendor's ESP-IDF example (LCD_RGB_ELEMENT_ORDER_RGB)
+  # The PCF8574 line of the display's reset. The vendor's ESP-IDF driver and wiki make it P5 (its pin 6, counted from
+  # one); the vendor's Arduino example pulses P6, which the wiki gives to the SD card's chip select.
+  LCD_RESET_EXIO: "5"
+  BACKLIGHT_FREQUENCY: "10000Hz"                # the backlight's PWM; the vendor's openHASP port dims at 10 kHz
+
+# ============================================================
+# No need to edit below this line.
+# ============================================================
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  flash_size: 16MB
+  cpu_frequency: 240MHz
+
+# The 8 MB of PSRAM in the ESP32-S3R8 (the vendor builds with OPI PSRAM).
+psram:
+  mode: octal
+  speed: 80MHz
+
+# One SPI bus for the display; no MISO (the vendor's schematic names GPIO2 LCD_MISO, its code uses it as chip select).
+spi:
+  id: lcd
+  clk_pin: GPIO5
+  mosi_pin: GPIO1
+
+# One I2C bus: the touch controller (0x15) and the expander (0x38). The RTC and the Grove I2C socket share it.
+i2c:
+  id: touch_bus
+  sda: GPIO8
+  scl: GPIO7
+  frequency: 400kHz
+
+# PCF8574A, as the vendor numbers it from zero: P0 speaker enable, P1 RTC interrupt, P2 charging (low while it
+# charges), P3 camera power down, P4 touch interrupt, P5 display reset, P6 SD card chip select. A PCF8574 line this
+# profile does not name stays an input, which the chip holds high: the SD card stays deselected.
+pcf8574:
+  - id: io_expander
+    address: 0x38
+    i2c_id: touch_bus
+
+output:
+  - platform: ledc
+    pin: GPIO6
+    id: gpio_backlight_pwm
+    frequency: ${BACKLIGHT_FREQUENCY}
+
+# The CST826 answers ESPHome's cst816 driver (chip id 0x11). Its interrupt line ends on the expander, not on a pin of
+# the chip, so it is polled, as the vendor's own examples do.
+touchscreen:
+  - platform: cst816
+    id: ts_touch
+    i2c_id: touch_bus
+    display: my_display
+    update_interval: 20ms
+
+# ESPHome's mipi_spi driver covers the ST7789 natively; the reset goes through the expander.
+display:
+  - platform: mipi_spi
+    id: my_display
+    model: ST7789V
+    spi_id: lcd
+    dimensions: {width: 240, height: 320}
+    color_order: ${DISPLAY_COLOR_ORDER}
+    invert_colors: ${DISPLAY_INVERT_COLORS}
+    cs_pin: GPIO2
+    dc_pin: GPIO3   # a strapping pin ESPHome warns about; the vendor wired the display to it
+    reset_pin:
+      pcf8574: io_expander
+      number: ${LCD_RESET_EXIO}
+      mode: OUTPUT
+    data_rate: ${DISPLAY_DATA_RATE}
+    update_interval: never
+    auto_clear_enabled: false
